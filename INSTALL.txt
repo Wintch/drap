@@ -1,0 +1,1 @@
+* No INSTALLation is provided at the moment, just copy the corresponding binary for your platform into trunk folder (same as base)
