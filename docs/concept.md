@@ -253,6 +253,42 @@ Located and read the verbatim SDK license (`EULA.Development Kit.rtf`, shipped i
 
 **Implication:** the underlying idTech4 *engine* code is genuinely GPLv3 either way, but the game-logic layer that openQ4/Prey2006/PreyVR build on top of it (the SDK-derived code) stays under this restrictive, retail-gated EULA — real legal weight if we ever want something standalone/freely-distributable/commercial on that branch, not just a "mod."
 
+## The full idTech3/idTech4 family, mapped — what each game actually innovated
+
+The user asked to check Wolfenstein and "all released idTech games" for anything worth combining, specifically calling out FAKK2 (Heavy Metal) and Alice. Went through id Software's own GitHub org plus every known idTech3-licensee game to build a real license + innovation map, not just a list.
+
+### Confirmed clean GPL, straight from `id-Software`'s own GitHub org
+
+`wolf3d`, `RTCW-SP`, `RTCW-MP`, `Enemy-Territory` (**Wolfenstein: Enemy Territory**, the standalone 2003 multiplayer game — distinct from, and not to be confused with, **Enemy Territory: Quake Wars**, the idTech4 game that was *never* open-sourced, see above), `Quake`, `Quake-2`, `Quake-III-Arena`, `DOOM`, `DOOM-3`, `DOOM-3-BFG`, plus `Quake-Tools`/`Quake-2-Tools`/`GtkRadiant`. This is the full, real ceiling of what id itself has ever released — no surprises beyond what's already in this doc, except that **Wolfenstein: Enemy Territory itself (not just RTCW) is clean GPL**, which matters a lot for the community/tooling goal (see below).
+
+### Also clean GPL, released by a different rights holder — Star Wars Jedi Knight II/Jedi Academy
+
+Raven Software (not id) released **Jedi Outcast** and **Jedi Academy** under GPLv2 in 2013, as a tribute to the fanbase after LucasArts closed. Both are idTech3 derivatives, heavily modified by Raven: the **Ghoul2** segmented/skeletal model system (dynamic mesh attachment, dismemberment — advanced character rendering for a 2002 engine) and a real physics-driven lightsaber combat system are the two standout technical contributions. **`JACoders/OpenJK`** is the actively maintained community fork (full SP+MP for Jedi Academy, SP only for Jedi Outcast) — a fourth genuinely-GPL idTech3-family codebase alongside Quake3/RTCW/ET, worth knowing about even if saber combat itself isn't relevant to drap.
+
+### NOT GPL — Heavy Metal: F.A.K.K.² and American McGee's Alice (confirmed via the actual EULA text)
+
+Checked directly (`a1batross/fakk2-sdk`'s `license.rtf`, Ritual Entertainment's own text) — **this is the exact same restrictive-modding-EULA pattern as Quake4/Prey, not GPL**:
+- *"You cannot sell or otherwise commercially exploit or utilize the shareware, registered/full retail version, demo or level editor in any way."*
+- *"You are not permitted to copy or otherwise reproduce the SOFTWARE or ACCOMPANYING MATERIALS; modify or prepare derivative copies."*
+- Personal use only, free redistribution of user-made levels only — no commercial use, no derivative redistribution.
+
+Ritual licensed a **snapshot of Quake III's engine code from id in February 1999** (before Q3A's own GPL release existed) and built FAKK2 on top of it — that snapshot itself was never released under GPL by anyone. **American McGee's Alice (2000, Rogue Entertainment)** was built directly on FAKK2's own modified codebase, so it inherits the same restrictive status — incomplete/partial code floats around via the `zturtleman/spearmint` community project, but there's no clean open release to build on. **Practical conclusion: neither is usable as a code base**, same as Quake4/Prey — they're valid *design* references only (see below), never code we can pull from.
+
+### What each one actually pioneered (the "map the innovations" ask)
+
+| Game | License | What it pioneered / is genuinely good at |
+|---|---|---|
+| **Quake III Arena** (1999) | GPL-2.0 | The client prediction + snapshot interpolation netcode model the entire genre still uses (see the ioquake3 section above). |
+| **RTCW** (2001, Gray Matter/Nerve) | GPL | First WWII shooter to popularize objective-based squad multiplayer; AI stealth/alertness system for guards in SP. Laid the groundwork Splash Damage then took further in ET. |
+| **Wolfenstein: Enemy Territory** (2003, Splash Damage) | GPL | **The genre-defining class-based objective multiplayer template** (Medic/Engineer/Soldier/Covert Ops) — still one of the most respected competitive shooter communities that exists, with `ETLegacy` an actively maintained fork (v2.85, Aug 2026) and a real living anti-cheat/mod ecosystem (ETPro, ShrubBot). **This is the single best real-world reference for drap's own "reopen to community, build tooling" goal** — it's the same problem (keep a 20+ year old idTech-family game alive via community-built tools), already solved, worth studying directly. |
+| **Jedi Outcast / Jedi Academy** (2002/2003, Raven) | GPL | Ghoul2 dynamic mesh/skeletal system; physics-driven melee (lightsaber) combat — the best id Tech 3-family reference if we ever want serious melee combat in DM VR beyond guns. |
+| **Heavy Metal: F.A.K.K.²** (2000, Ritual) | Restrictive EULA, not usable as code | First to push id Tech 3 into third-person action-adventure territory (camera + melee on an engine built for first-person arena shooters) — design reference only. |
+| **American McGee's Alice** (2000, Rogue) | Restrictive EULA (inherits FAKK2's), not usable as code | Not a technical/rendering innovator — its value is entirely atmosphere/art-direction/narrative design, worth keeping in mind for tone references, never for code. |
+
+### VR angle: another Team-Beef-Studios data point
+
+**`Team-Beef-Studios/RTCWQuest`** exists — same team as Doom3Quest/PreyVR/ioq3quest, migrated from the old Oculus VrApi SDK to OpenXR, but **Android/arm64-only** right now, same "needs real porting work, not already-working-on-desktop" caveat as Doom3Quest. `CactusVRStudios/RTCW-PCVR` is an aspirational, very early-stage attempt at a PCVR port — not something to rely on yet. Net effect: doesn't change the "Quake3VR/Trinity VR is what already clears the 90Hz-on-desktop bar today" conclusion, but confirms the same team is independently validating the same "port the VR layer to OpenXR/desktop" work pattern across the whole idTech3 family — useful precedent if we ever do that work ourselves for ET or RTCW.
+
 ## Ideas for later phases (don't block the engine decision)
 
 - MCP server on top of the engine (console/rcon + asset pipeline) to iterate with AI.
