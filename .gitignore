@@ -1,0 +1,8 @@
+# Reference clones used for research/comparison only (not drap's own source)
+vendor/
+
+# Build artifacts
+build/
+*.o
+*.so
+*.pk4
