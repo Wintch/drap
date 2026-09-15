@@ -434,19 +434,81 @@ Earlier this doc stated flatly that RBDOOM-3-BFG "has no VR layer, would have to
 | Engine | Runs with real content | VR/OpenXR layer | Headset-tested |
 |---|---|---|---|
 | Quake3VR / Trinity VR | Yes (Quake3 demo) | Yes, working, native OpenXR | **Yes** — playable, 90Hz confirmed from the game's own log, one open issue (height) |
-| RBDOOM-3-BFG | Yes (owned BFG Edition) | Real, active, **on separate unmerged branches** (`openvr*`, `mods/samsonvr`) — OpenVR/SteamVR, not OpenXR; not yet tried by us | No — not yet attempted |
+| RBDOOM-3-BFG | Yes (owned BFG Edition) | Real, on branch `openvr5` — session reaches `FOCUSED` cleanly, crash fixed | **Tried, still blocked** — crash fixed (real `xrizer` bug, patched), session runs clean with headset worn, but the HMD panel shows only backlight — no image ever reaches it, still under investigation |
 | The Dark Mod | Yes (own free assets) | Stale fork only (`thedarkmodvr`, last pushed 2022) | No |
 | Prey2006 | Yes (demo) | None on desktop (`PreyVR`/Team-Beef is Android-only) | No |
 
 **The height issue, precisely (recap):** root-caused to `reverb-g2`'s Monado/WMR floor calibration reporting the headset ~10m above the real floor (`raw_y=10.35`), not a Trinity VR bug (see the two sections above). The in-game `vr_heightAdjust -8.65` cvar compensates but is a fragile per-session workaround, not a fix — the durable fix belongs in `reverb-g2` itself.
 
-**Recommendation, in priority order (updated after the correction above):**
-1. **Fix the floor calibration in `reverb-g2`, not per-game.** Still the one open item between "played it once with a workaround" and "VR just works" on the front that's actually headset-tested — a one-time fix that benefits every OpenXR app on the rig.
-2. **Try RBDOOM-3-BFG's own `openvr`/`mods/samsonvr` branches next, on `iashur`.** This is now a real, much cheaper option than building VR from scratch: check out the most recent branch (likely `openvr5` or `mods/samsonvr`), build it against our already-owned BFG assets, and find out whether it can reach Monado directly (OpenComposite-style shim) or needs SteamVR-on-Linux in between. This could get us real BFG-quality rendering *in the headset* far sooner than a from-scratch OpenXR layer would.
-3. **Investigate the Trinity VR multiplayer connection failure** (still open, not started).
-4. **If the OpenVR branches turn out to be a dead end for our Monado-only setup**, fall back to the original from-scratch OpenXR plan, using Doom3Quest/PreyVR/Fully Possessed as design references (not code to inherit — Doom3Quest's OpenGL/dhewm3 code doesn't apply to NVRHI/Vulkan directly).
+### ✅ Attempted hands-on (2026-09-15): RBDOOM-3-BFG's `openvr5` branch reaches a real Monado/G2 VR session — no SteamVR needed at all
 
-In short: Quake3VR/Trinity VR is one calibration fix away from being genuinely clean VR today. RBDOOM-3-BFG is the stronger renderer with a now-proven >90Hz simulation, but its VR layer is real, unstarted work — not a missing menu entry.
+Built `openvr5` (the newest of the `openvr*` line, confirmed by commit dates) into `/mnt/resolve_test/drap-vault/rbdoom3bfg-vr` (`~/vr/rbdoom3bfg-vr`), fully separate from the working `master` checkout. Two real fixes needed:
+- `.gitmodules` references the `neo/extern/openvr` submodule but the branch's tree has no gitlink for it — cloned `ValveSoftware/openvr` into that path manually.
+- Same class of issue as master's `renderprogs2` fix: this branch's `fs_game_base` defaults to `mod_vr`, and compiled shaders land in the source tree's `mod_vr/renderprogs2/`, not next to the binary — fixed with a symlink, same pattern as before.
+
+**The genuinely new result: it didn't need SteamVR at all.** The user's own `xrizer` (their OpenVR→OpenXR shim, already registered as the active OpenVR runtime in `openvrpaths.vrpath`) picked it up directly — launched via the user's own `jack-in-wayland.sh up 1 3dof` to bring up Monado, xrizer negotiated with Monado, **detected "Head: 'HP Reverb Virtual Reality Headset G2'" by name**, created a real Vulkan OpenXR session, and the engine loaded genuine VR shaders (`builtin/VR/stereoDeGhost`, `stereoWarp`, `stereoInterlace`) — got as far as submitting an actual rendered stereo frame to the compositor.
+
+**Then a reproducible crash — in `xrizer`, not in RBDOOM-3-BFG or our build/config:**
+```
+XR_EXT_user_presence: user is now NOT PRESENT (doffed)
+OpenXR session state: SYNCHRONIZED → STOPPING → IDLE → EXITING
+... session restarted ...
+panicked at .../openxrs.../swapchain.rs:106: wait_image must be called before release_image
+```
+This is gated behind Monado's presence sensor reporting the headset as not currently worn (true in this unattended test, run with nobody wearing it) — that triggers an immediate OpenXR session teardown+recreate, and xrizer's swapchain state tracking doesn't survive that restart cleanly. Two runs, identical crash. **This is a bug in `xrizer`'s `Compositor::Submit`/session-restart path** (the user's own reverb-g2-side project), not in RBDOOM-3-BFG's VR code.
+
+**Launch command, for the user to try wearing the headset from the start** (presence would stay PRESENT throughout, likely skipping the doff/restart path that triggers the crash):
+```
+LD_LIBRARY_PATH=/home/iam/vr/OpenXR-SDK-Source/build/src/loader XR_RUNTIME_JSON=/home/iam/vr/monado/build/openxr_monado-dev.json IPC_IGNORE_VERSION=1 ./RBDoomVR +set vr_enable 1 +set com_showFPS 1
+```
+(from `~/vr/rbdoom3bfg-vr/neo/build`, after `~/vr/jack-in-wayland.sh up 1 3dof` or `6dof`).
+
+**Practical upshot: the "OpenVR vs OpenXR" integration risk flagged above turned out to be a non-issue** — `xrizer` already bridges this cleanly, confirmed by a real detected headset and a real submitted frame. What's left is a real fix inside `xrizer`, not a physical-testing question (see below).
+
+### ❌ Physically tested (2026-09-15): crashes identically with the headset actually worn — not a presence issue after all
+
+Ran it twice more with the user wearing the Reverb G2 from before launch. **Identical crash, same ~15ms timing, every time**, regardless of physical presence:
+```
+[+0.000s] XR_EXT_user_presence: user is now NOT PRESENT (doffed)
+[+0.000s] OpenXR session state: SYNCHRONIZED → STOPPING → IDLE → EXITING
+[+0.024s] Creating OpenXR session ... New session created! → READY → Began OpenXR session.
+[+0.004s] Received game texture, restarted session with new data
+[+0.000s] panicked: wait_image must be called before release_image
+```
+**The original hypothesis was wrong** — this isn't gated on real presence-sensor state, it fires unconditionally on the very first session. Reading the sequence: `xrizer` appears to report a synthetic/default "doffed" event on session startup regardless of actual hardware state, which tears down and recreates the OpenXR session before the first frame — and its swapchain image-acquire/release bookkeeping isn't correctly reset across that recreation, so the engine's first `Submit()` call trips the `openxr` crate's `wait_image`-before-`release_image` invariant on a swapchain that was never `wait_image`'d in the new session.
+
+**This is a genuine, reproducible bug in `xrizer`'s session-restart/swapchain lifecycle handling** (`Compositor::Submit`, around the session-recreate path) — not something fixable from the RBDOOM-3-BFG or drap side. Two additional launch-config issues found and fixed along the way (unrelated to the crash, needed just to get this far): the SSH session had no `DISPLAY`/`XAUTHORITY` set, which made SDL fall back to an "offscreen" video driver and fail to create the desktop mirror window's Vulkan surface — fixed with `DISPLAY=:0 XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.*` (same pattern as the TDM installer earlier in this doc).
+
+### ✅ Root cause found and fixed: the `wait_image`/`release_image` crash (2026-09-15)
+
+Traced precisely in `xrizer`'s own source (`src/compositor.rs`, `src/openxr_data.rs`):
+
+- **The "doffed" event is a real Monado report, but a red herring — not the trigger.** `openxr_data.rs`: `user_present` defaults to `true`; the logged "NOT PRESENT (doffed)" line only fires on a real `UserPresenceChangedEXT` event from Monado, and `poll_events_impl` just stores the bool — it never calls `restart_session()`. It just happens to land at almost the same instant as the real bug, every time, because both are startup-timed. Confirmed independently by the later physical test: presence correctly read as PRESENT when actually worn, crash still didn't reproduce differently.
+- **The real bug:** `Compositor::Submit()` (`compositor.rs:988`) calls `initialize_real_session()` the first time the game hands it a real texture. That builds a brand-new `FrameController` via `FrameController::new()` (`compositor.rs:1348`), which constructs `swapchain_data` but leaves `image_acquired: false` and **never calls `acquire_swapchain_image()`** — unlike its sibling `recreate_swapchain()` (line 1391), which explicitly does. On this first-ever Submit, `submit_impl()` unconditionally calls `data.swapchain.release_image()` once both eyes are submitted — with no prior `wait_image()` ever called on this swapchain generation. That's the exact panic.
+- **Fix: one function, ~10 real lines.** Made `FrameController::new()` call `acquire_swapchain_image()` right after building `swapchain_data`, mirroring what `recreate_swapchain()` already does. Applied directly to the user's `~/vr/xrizer` checkout (`src/compositor.rs`, uncommitted — the user's call whether to commit it in their own `reverb-g2`/xrizer repo) and rebuilt with `cargo xbuild --release`. **Confirmed fixed**: relaunched twice with the headset physically worn — no crash either time, session reaches `FOCUSED` cleanly, and (on the second, post-Monado-restart run) presence correctly reads `PRESENT (worn)` instead of the earlier `NOT PRESENT`.
+
+### ❌ New symptom found once the crash was fixed: real VR session, but the headset panel shows nothing (2026-09-15)
+
+With the crash gone, a **new, separate problem** surfaced: the desktop monitor shows correct, real head-tracked gameplay (camera moves with the headset, looks right) — but **the physical HMD panel itself stays black, showing only its own backlight**. Tracking data clearly reaches the game (used for the desktop-mirror render); no actual image reaches the headset's display.
+
+**Ruled out, with real evidence, not guessing:**
+- **The desktop mirror "masking" a broken HMD path is structural, not a bug.** `neo/renderer/NVRHI/RenderBackend_NVRHI.cpp`: the normal desktop swapchain (`deviceManager->EndFrame()`/`Present()`) runs *unconditionally* every frame, completely independent of `vrSystem->SubmitStereoRenders(...)` (gated separately on `vrSystem->IsActive()`). They're two independent presentation pipelines sharing only the same source render targets — so a correct desktop image proves the game/render-backend side is fine, but says nothing about whether the HMD path actually works.
+- **Not a windowed/debug-mode fallback.** Monado's own log (`~/vr/jack-in-wayland.log`) for this session shows genuine direct-mode: `comp_window_direct_wayland_init` → `Lease granted` → `Target backend wayland-direct initialized!`, `VK_EXT_direct_mode_display` enabled, real `VkDisplaySurfaceCreateInfoKHR` at `4320x2160@90` targeting the actual panel. (Also found, for the record: `jack-in-wayland.sh`'s own comments document a *previously fixed* 2026-08-19 bug where `XRT_COMPOSITOR_LOG=warn` silently caused a windowed fallback — the script now hardcodes `debug` specifically to avoid that; confirmed this run got the correct setting, so that historical bug isn't what's happening here.)
+- **No `SuspendRendering` call anywhere in RBDOOM-3-BFG's source**, and **no Vulkan present/acquire errors logged anywhere** in Monado's log.
+- **Not a degraded long-lived-compositor issue either** — the first two crash-fix confirmation runs were against a `monado-service` instance that had been alive since 15:36 with ~490,000 accumulated "Fake pacer fell behind" warnings from earlier testing; did a full clean restart (`jack-in-wayland.sh down` + `up 1 3dof`) and relaunched fresh — **same black-panel result**, so it isn't accumulated compositor state either.
+
+**One strong, still-unconfirmed lead:** Monado's log shows a real client swapchain genuinely created for the session (`comp_swapchain_create_init`, matching the live RBDoomVR process), but immediately followed by a continuous, unbroken stream of `predict_next_frame_present_time: Fake pacer fell behind: jumped 1 period(s) forward` — essentially every frame period, never catching up. That pattern is consistent with **presents to the real display plane never actually completing/flipping**, matching "backlight on, image never updates" — but there's no direct "present failed" log line proving it.
+
+**Concrete next diagnostic step (not yet done):** run the next launch with `RUST_LOG=xrizer=trace` to see, per-frame, whether `end_frame()` is building a real non-empty `CompositionLayerProjection` each frame or silently submitting zero layers — gated on OpenXR's `shouldRender` flag (`compositor.rs` around lines 1453/1571). That's the one concrete code path that would produce exactly this symptom, and it's a log-level flag, not a code change — cheap to try next.
+
+**Recommendation, in priority order (updated 2026-09-15, post-crash-fix):**
+1. **Run the `RUST_LOG=xrizer=trace` diagnostic above** — cheapest possible next step (a log flag, no rebuild) to confirm whether real frames are being built and handed to Monado at all.
+2. **If frames are real and non-empty, the bug is downstream of `xrizer`** — likely in Monado's presentation-to-plane path itself (the pacer-drift lead points there) — a deeper `reverb-g2`-side investigation.
+3. **If frames are empty/zero-layer, the bug is back in `xrizer`'s `end_frame()`/`shouldRender` gating** — likely another small, contained fix, same category as the `wait_image` one.
+4. **Fix the floor calibration in `reverb-g2`** for Quake3VR/Trinity VR's remaining height issue — still open, still a one-time fix, and now the more mature of the two VR fronts (this one still shows nothing in the headset at all).
+5. **Investigate the Trinity VR multiplayer connection failure** (still open, not started).
+
+In short: real progress today — a genuine, confirmed-fixed crash in `xrizer` (patch applied and tested, not yet committed in the user's own repo), the session now reaches `FOCUSED` cleanly with correct presence detection. But there's a second, separate, still-open bug: no image ever reaches the physical panel, only the desktop mirror. Quake3VR/Trinity VR remains the only front that's ever actually shown something in the headset.
 
 ## Ideas for later phases (don't block the engine decision)
 
