@@ -223,7 +223,21 @@ Direct question worth answering with source code, not guesswork: since Quake3VR/
 
 **Why fixing 90Hz on RBDOOM-3-BFG looks cheaper than it looks — `com_engineHz` is real infrastructure, not a renamed cvar.** Read `neo/framework/common_frame.cpp`'s actual frame-pacing loop: it's a proper accumulator-based fixed-timestep game loop (the "Fix Your Timestep" pattern) that can run **multiple game-simulation frames per render frame** based on `com_engineHz` — meaning raising it genuinely raises the simulation rate itself, not just a render-side interpolation trick. And in `neo/framework/Common_load.cpp:510`: `const float mpEngineHz = ( com_engineHz.GetFloat() < 90.0f ) ? 60.0f : 120.0f;` — multiplayer already auto-selects a real 120Hz simulation the moment you ask for ≥90. This was built by id itself for the 2012 BFG Edition to support PC/PS3/Xbox360 at different fixed framerates in the same shipped, certified console product — a fundamentally different foundation than dhewm3's six years of unmerged community attempts (PR #297/#584/#585) to bolt a variable tic onto an engine that was never designed for it.
 
-**Conclusion: fixing 90Hz on RBDOOM-3-BFG is very likely the cheaper, lower-risk path**, because the expensive part (modern per-pixel rendering — normal maps, PBR, real SSAO, GI) is already built and working there, while the missing part (a genuine >90Hz simulation) already has serious first-party engineering behind it, not a hopeful patch. Porting rendering to Quake3 would mean re-doing a decade-plus of someone else's rendering-architecture work from a strictly older baseline. **Not yet verified hands-on** — `com_engineHz`'s real behavior at 90/120Hz (frame timing, physics stability, whether it plays nice with VR head-tracking) still needs the same rigor as the Trinity VR test (`vr_frameTimingLog`-equivalent measurement on real hardware) — blocked on the same thing as running RBDOOM-3-BFG at all: no owned BFG-format game data yet on `iashur` (see the demo-asset investigation below).
+**Conclusion: fixing 90Hz on RBDOOM-3-BFG is very likely the cheaper, lower-risk path**, because the expensive part (modern per-pixel rendering — normal maps, PBR, real SSAO, GI) is already built and working there, while the missing part (a genuine >90Hz simulation) already has serious first-party engineering behind it, not a hopeful patch. Porting rendering to Quake3 would mean re-doing a decade-plus of someone else's rendering-architecture work from a strictly older baseline.
+
+### ✅ VERIFIED HANDS-ON (2026-09-15): `com_engineHz 120` really does run the engine at 120Hz
+
+The prediction above is no longer theoretical. The user owns **DOOM 3: BFG Edition** on Steam — it turned out not to be missing, just consolidated: Bethesda merged the separate "DOOM 3: BFG Edition" store listing into a single "DOOM 3" package back in **August 2022** (owners were upgraded automatically), so it wasn't showing up searching for "BFG Edition" specifically. Found it installed at `/mnt/videos/SteamLibrary/steamapps/common/DOOM 3 BFG Edition/` (Steam app 208200), 7GB of real BFG-format `.resources`/`.crc` data — symlinked directly into RBDOOM-3-BFG's runtime directory (no need to copy 7GB).
+
+Two build gaps had to be closed first (compile-only testing had never caught them, since we'd never actually run it before):
+1. **Shaders were never compiled.** `cmake --build` alone doesn't build the separate `Shaders` CMake target (`add_dependencies(Shaders ShaderMake)`) — needed an explicit `cmake --build . --target Shaders`.
+2. **Compiled shaders land in the wrong place for actually running the game.** `neo/shaders/CMakeLists.txt` writes them to `<source>/base/renderprogs2`, not next to the binary. Fix: rebuilt the runtime `base/` as a real directory with individual symlinks to each BFG data file/folder *plus* a symlink to the source tree's `renderprogs2`, instead of symlinking the whole `base/` folder to Steam's read-only copy.
+
+**Result: launched cleanly, loaded a real level (`le_enpro1`, real collision/AAS/script compilation), and got real gameplay screenshots** — a dead marine on a blood-slicked metal floor with genuine PBR specular reflections, atmospheric red emergency lighting, the real BFG Edition main menu (showing the bundled classic DOOM/DOOM II too). Vulkan initialized correctly on the RTX 3060 Ti with mesh shaders, descriptor indexing, and all the modern extensions RBDOOM-3-BFG's renderer wants.
+
+**Then the actual test.** `com_showFPS 1` first showed a flat **"60fps"** with `com_engineHz 120` set — not a failure, but exactly what the source predicted: `maxFPS = min(displayFrequency, com_engineHz)` when vsync is on, and this desktop monitor is 60Hz. Disabled vsync (`r_swapInterval 0`) to measure the simulation rate directly, independent of display sync — and got a clean **"120fps"** on screen. **`com_engineHz` genuinely drives the full engine loop (simulation + render) at the requested rate — confirmed by direct measurement, not just reading the accumulator-loop source.** This is the single biggest open question from the cost-comparison analysis above, now answered with real data instead of code-reading alone.
+
+**What's still open:** this was a flat-desktop test, not a VR one — RBDOOM-3-BFG has no OpenXR/VR integration at all yet, so we still don't know whether a *VR camera update* wired to this loop would behave as cleanly as Trinity VR's `vr_frameTimingLog` result did. That's real engineering work still ahead, not a fixed cvar flip. But the foundation question — "can the simulation itself genuinely exceed 90Hz without the physics/state problems that killed dhewm3's attempts" — now has a confirmed yes.
 
 ### Feature-completeness check across the three idTech4 forks (2026-09-15)
 
@@ -345,19 +359,82 @@ Ritual licensed a **snapshot of Quake III's engine code from id in February 1999
 
 **`Team-Beef-Studios/RTCWQuest`** exists — same team as Doom3Quest/PreyVR/ioq3quest, migrated from the old Oculus VrApi SDK to OpenXR, but **Android/arm64-only** right now, same "needs real porting work, not already-working-on-desktop" caveat as Doom3Quest. `CactusVRStudios/RTCW-PCVR` is an aspirational, very early-stage attempt at a PCVR port — not something to rely on yet. Net effect: doesn't change the "Quake3VR/Trinity VR is what already clears the 90Hz-on-desktop bar today" conclusion, but confirms the same team is independently validating the same "port the VR layer to OpenXR/desktop" work pattern across the whole idTech3 family — useful precedent if we ever do that work ourselves for ET or RTCW.
 
-## Demo-asset investigation: free game data for RBDOOM-3-BFG/dhewm3 testing (2026-09-15, in progress)
+## Demo-asset investigation: Prey demo confirmed working, real EULA read (2026-09-15)
 
 Both Doom 3 (2004) and Prey (2006) had official free demos — a possible way to get real, legally-distributable game data to actually run/test engines on `iashur` without buying anything, the same way the free Quake 3 Arena demo already unblocked Trinity VR testing.
 
 - **Downloaded both** (via Internet Archive mirrors): `Doom3.exe` (483MB) and `Prey.exe` (470MB), now in `/mnt/resolve_test/drap-vault/demos/{doom3,prey}/`.
-- **Important asymmetry, checked against RBDOOM-3-BFG's own docs**: RBDOOM-3-BFG requires **BFG Edition**-format game data specifically ("only for BFG Edition" — confirmed via its own wiki/README, no original-2004-format support). The Doom 3 (2004) demo is **not** BFG-format, so it won't unblock RBDOOM-3-BFG directly — it would only be useful for testing vanilla **dhewm3** (which we haven't cloned/built yet) or another original-format idTech4 fork. The Prey demo, by contrast, targets the same 2006 game Prey2006 (our already-built engine) already expects — much more likely to be a direct, clean match.
-- **Blocked on extraction, not yet resolved**: both are old (2006-era) InstallShield-packaged `.exe` installers. `unshield` (the standard Linux tool for these) can't open either file directly — the installer data appears to be embedded as a PE resource rather than laid out as separate `.cab`/`.hdr` files, which `unshield` expects. Next step would be pulling the embedded cabinet out first (`cabextract`/`icoutils`, not yet installed) before `unshield` can run. **Have not yet been able to read either demo's actual EULA text** — so licensing (same "official demo, freely distributable" pattern as the Quake 3 demo, or something more restrictive) is still unconfirmed, not assumed clean.
+- **Important asymmetry, checked against RBDOOM-3-BFG's own docs**: RBDOOM-3-BFG requires **BFG Edition**-format game data specifically ("only for BFG Edition" — confirmed via its own wiki/README, no original-2004-format support). The Doom 3 (2004) demo is **not** BFG-format, so it won't unblock RBDOOM-3-BFG directly — it would only be useful for testing vanilla **dhewm3** (which we haven't cloned/built yet) or another original-format idTech4 fork. The Prey demo, by contrast, targets the same 2006 game Prey2006 (our already-built engine) already expects — a direct, clean match, confirmed below.
+
+### Extraction solved: `iss_extract` + `unshield`, in that order
+
+`unshield` alone couldn't open either `.exe` directly — these are old (2006-era) InstallShield installers where the actual cabinets (`data1.cab`/`data1.hdr`/`data2.cab`) are bundled *inside* the PE executable rather than shipped as separate files, which is what trips up `unshield`'s normal detection. Fix: `hifi/iss_extract` (built cleanly from source with plain `gcc`, no dependencies) unpacks the embedded cabinets first — `iss_extract l Prey.exe` lists them, `iss_extract x Prey.exe data1.cab data1.hdr data2.cab` pulls them out — and only then can `unshield x data1.hdr` do its normal job. **Reusable recipe for the Doom 3 (2004) demo too**, not yet run since it doesn't unblock our current priority (RBDOOM-3-BFG).
+
+### The actual EULA — read directly, and it's more restrictive than the Quake 3 demo
+
+Unlike Quake 3 Arena's demo (which ships its own explicit `DEMO_LICENSE.txt` granting free redistribution — why Trinity VR/q3vr can legally bundle it), Prey's `eula.rtf` (extracted, Take-Two Interactive/Human Head Studios as licensor) is a standard restrictive commercial EULA with no demo-specific carve-out:
+
+> *"(b) Distribute, lease, license, sell, rent or otherwise transfer or assign this Software, or any copies of this Software, without the express prior written consent of LICENSOR"*
+
+**Practical reading: fine for us to use locally on `iashur` for our own engineering verification (personal use, not distribution) — not something we can bundle into drap's own repo or ship to testers**, unlike the Quake 3 demo. Different category from the free-and-clear GPL/WTFPL content elsewhere in this doc; treat it the same way as owning a copy of the retail game for internal testing only.
+
+### Confirmed working end to end: Prey2006 + real demo content
+
+Copied the extracted `demo00.pk4` (447MB, the actual game data — a standard idTech4 `.pk4`, directly compatible) into `output/linux/base/` next to our already-built `prey06` binary. **Launched cleanly and got real screenshots**: the actual Prey main menu (correct logo/UI art), and — after navigating in via synthetic input (see the uinput technique from the TDM section above) — the real opening bathroom cutscene with the player character Tommy, correctly normal-mapped leather jacket with real specular highlights, proper per-pixel lighting. This is the **second** engine (after TDM) we've now verified end-to-end with real content, not just compiled — and it's specifically the one with real MegaTexture source, so it's the natural next candidate to explore further (the demo's `deathwalk1`/portal-world areas would be the place to actually see MegaTexture terrain in action, not yet explored).
+
+**On the "Quest demo-pack apps" idea:** the user recalled seeing Prey (and Quake3, Wolfenstein, etc.) as playable standalone demos through a third-party Quest app. Didn't chase that specific app down — we solved the actual blocker ourselves (real EULA read, working extraction pipeline, confirmed-compatible assets), which makes it moot for our purposes. Worth noting as a data point: Team-Beef-Studios' `PreyVR` almost certainly uses this exact same official demo `.pk4` under the hood, since it's the only free Prey content that exists — independent confirmation this is the standard, expected path.
+
+### OpenJK (Jedi Academy) — built, real demo assets found, running end to end (2026-09-15)
+
+Followed up on the Star Wars/Ghoul2 thread from the innovations table above by actually building and testing it, the same way as the other engines.
+
+**Build was the smoothest of the four engines tried this session** — `cmake -DCMAKE_BUILD_TYPE=Release ..` found every dependency immediately (JPEG, ZLIB, PNG, OpenGL already present from earlier builds), zero missing packages, clean `make -j$(nproc)`. One gotcha matching the TDM/RBDOOM-3-BFG pattern: the built `.so` files (`rdsp-vanilla_x86_64.so`, `jagamex86_64.so`, etc.) land in their own subdirectories under `code/`/`codemp/`, not next to the main `openjk_sp.x86_64` binary where it looks for them at runtime — copied them into the build root to fix.
+
+**Real free demo confirmed to exist**: the Jedi Academy single-player demo (Sept 2003, Rift + Tatooine levels, 187MB, Raven/LucasArts) — pulled from Internet Archive. Same InstallShield-family packaging problem as the Prey demo, solved slightly differently this time: `cabextract` could directly enumerate and extract this one's embedded `data1.cab`/`data1.hdr`/`data2.cab` (didn't need the `iss_extract` pre-unwrap step Prey's installer needed — apparently a different InstallShield sub-format), then `unshield` handled the rest normally. Got the real `GameData/Demo/assets0.pk3` (188MB, standard idTech3 `.pk3`, directly compatible with OpenJK).
+
+**Two real, demo-specific engine quirks had to be worked around** (found by reading OpenJK's own source, not guessing):
+1. The demo's UI files are named `ui/demo_menus.txt` instead of the retail `ui/menus.txt` — fixed with `+set ui_menuFiles ui/demo_menus.txt` (a real, exposed cvar; `code/ui/ui_main.cpp`).
+2. The in-game (pause) menu file (`ui/ingame.txt`) is **hardcoded** in `ui_main.cpp` with no cvar override — the demo only ships `ui/demo_ingame.txt`. Fixed by extracting that file from the pk3 and placing it as a loose file at `Demo/ui/ingame.txt` — idTech3's search path checks loose files before pk3 contents, so this transparently overrides without touching the original pak.
+
+**Confirmed running real gameplay**: `+devmap t3_rift` (the demo's real Tatooine/Rift level, found by listing `.bsp` files in the pak) loaded correctly, and got a real screenshot — Jaden Korr in a lit ice cave, the iconic Jedi Academy radial HUD (health/Force gauges), a glowing crystal light source with real dynamic lighting. **Fourth engine this session verified running with real content, not just compiled** (after TDM, Prey2006, and RBDOOM-3-BFG). Ghoul2's actual rendering wasn't specifically isolated/studied yet — this was end-to-end verification, not a deep dive into the dismemberment system itself.
+
+### Kingpin, GoldSrc (Half-Life), and Call of Duty's IW engine — checked, none usable
+
+Quick verification of three more idTech-adjacent candidates the user asked about, closing out the "is there anything else out there" question:
+
+- **Kingpin: Life of Crime** (1999, Xatrix/Interplay, modified Quake II/id Tech 2 engine) — source code reported **lost**; only an unofficial SDK mirror exists (`QuakeTools/Kingpin-SDK-v1.21`) with its own restrictions. Not usable.
+- **GoldSrc (Half-Life's engine)** — confirmed **never released** by Valve under any open license, despite being a heavily modified Quake/id Tech 2 derivative. Fully proprietary throughout its life.
+- **Call of Duty's IW engine** — confirmed **never open-sourced**, proprietary since Call of Duty (2003). Genuinely rooted in id Tech 3 + **Ritual Entertainment's "ÜberTools"** enhancements — the same Ritual behind FAKK2 — a real historical link, but no new usable code; "OpenIW" on GitHub is an unofficial community re-implementation, not real leaked/released source.
+
+None of the three add anything beyond what's already mapped in the innovations table — confirms the real idTech-family GPL surface (id's own releases + the Jedi Outcast/Academy exception) is genuinely the full extent of what's usable, not an oversight.
 
 ## Dev environment note: storage convention on `iashur` (2026-09-15)
 
 The root SSD on `iashur` filled up (91% full, 20GB free) after building RBDOOM-3-BFG + Prey2006 + The Dark Mod. **All drap-specific engine clones, builds, and downloaded game/demo data now live on `/mnt/resolve_test/drap-vault/`** (407GB free), symlinked back into `~/vr/<name>` so every path already written down in this doc keeps working unchanged. Applies going forward too — new engine clones/builds should be created directly in the vault path and symlinked, not dropped into `~/vr/` first.
 
 **Scope is drap-only.** `~/vr/` also holds the user's separate `reverb-g2` project files (`monado/`, `xrizer/`, `logs/`, `proton-prefixes/`, `basalt/`, `tracy-profiler/`, `tts-voices/`, `nonsteam/`, etc.) — none of that was touched or moved.
+
+## Current status and recommended next steps (2026-09-15)
+
+**Where things actually stand, in one place:** four engines are now built and confirmed running with real content this session (TDM, Prey2006, RBDOOM-3-BFG, OpenJK) — but only **one** has ever been tested with the headset on: Quake3VR/Trinity VR. That's not a testing gap, it's a scope gap: RBDOOM-3-BFG, TDM, and Prey2006 have no VR/OpenXR integration to test yet. Their verification this week was flat-desktop rendering and frame-pacing only, not headset gameplay.
+
+| Engine | Runs with real content | VR/OpenXR layer | Headset-tested |
+|---|---|---|---|
+| Quake3VR / Trinity VR | Yes (Quake3 demo) | Yes, working | **Yes** — playable, 90Hz confirmed from the game's own log, one open issue (height) |
+| RBDOOM-3-BFG | Yes (owned BFG Edition) | **None exists** — would be built from scratch | No |
+| The Dark Mod | Yes (own free assets) | Stale fork only (`thedarkmodvr`, last pushed 2022) | No |
+| Prey2006 | Yes (demo) | None on desktop (`PreyVR` is Android-only) | No |
+
+**The "BFG has no VR switch" is accurate, not a missed setting.** RBDOOM-3-BFG's `com_engineHz 120` result (above) proves the *simulation* can run fast enough — but there is no camera/head-tracking/OpenXR code in this engine at all, on any platform. Quake3VR/Trinity VR is the only codebase in this lineup that actually has that layer built and working.
+
+**The height issue, precisely (recap):** root-caused to `reverb-g2`'s Monado/WMR floor calibration reporting the headset ~10m above the real floor (`raw_y=10.35`), not a Trinity VR bug (see the two sections above). The in-game `vr_heightAdjust -8.65` cvar compensates but is a fragile per-session workaround, not a fix — the durable fix belongs in `reverb-g2` itself.
+
+**Recommendation, in priority order:**
+1. **Fix the floor calibration in `reverb-g2`, not per-game.** This is the one open item between "played it once with a workaround" and "VR just works" on the only front that's actually headset-tested — and it's a one-time fix in the tracking stack that benefits every OpenXR app on the rig, not just this engine.
+2. **Investigate the Trinity VR multiplayer connection failure** (still open, not started). Once height is solid, this is what turns the DM-VR front into something testable with a second player.
+3. **Treat RBDOOM-3-BFG's VR integration as the next real engineering front, not a quick add.** It needs an actual OpenXR camera/input layer built from scratch and wired into the now-confirmed-working `com_engineHz` loop — Doom3Quest/PreyVR/Fully Possessed are design references (IK, locomotion, comfort options), not code to inherit, since they're all OpenGL-era. This is where the coop-vs-AI pillar actually starts.
+
+In short: Quake3VR/Trinity VR is one calibration fix away from being genuinely clean VR today. RBDOOM-3-BFG is the stronger renderer with a now-proven >90Hz simulation, but its VR layer is real, unstarted work — not a missing menu entry.
 
 ## Ideas for later phases (don't block the engine decision)
 
